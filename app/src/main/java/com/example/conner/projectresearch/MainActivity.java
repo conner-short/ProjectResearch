@@ -1,13 +1,28 @@
 package com.example.conner.projectresearch;
 
 import android.app.Activity;
+import android.content.Context;
 import android.content.res.Configuration;
 import android.os.Bundle;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.Toast;
 
 public class MainActivity extends Activity {
     private WebView wv;
+
+    private class JSObject {
+        @JavascriptInterface
+        public void MakeToast() {
+            Context c = getApplicationContext();
+            CharSequence text = "A toast to the Emperor!";
+
+            Toast toast = Toast.makeText(c, text, Toast.LENGTH_SHORT);
+
+            toast.show();
+        }
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -16,10 +31,12 @@ public class MainActivity extends Activity {
         wv = new WebView(this);
         wv.setWebViewClient(new WebViewClient());
         wv.getSettings().setJavaScriptEnabled(true);
+        wv.addJavascriptInterface(new JSObject(), "InjectedObject");
 
         setContentView(wv);
 
-        wv.loadUrl("https://www.example.com/");
+        wv.loadData("<html><body></body></html>", "text/html", null);
+        wv.loadUrl("javascript:InjectedObject.MakeToast()");
     }
 
     @Override
