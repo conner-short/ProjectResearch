@@ -5,24 +5,29 @@ import android.nfc.NfcAdapter;
 import android.nfc.Tag;
 import android.os.Bundle;
 import android.support.annotation.Nullable;
-import android.webkit.JavascriptInterface;
 
 /**
  * Class defining NFC activites for main Activity.
  */
 public abstract class NativeNFCActivity extends Activity {
+    protected enum NfcMode {DISABLED, READER, CARD_EM};
+
+    protected NfcMode mNfcMode;
     private NfcAdapter mNfcAdapter;
 
     abstract void onCardData(byte[] bytes);
 
-    @JavascriptInterface
-    public final void disable() {
-        onNFCDisable();
+    public final void disableReader() {onNFCDisableReader();}
+    public final void disableCardEm() {onNFCDisableCardEm();}
+
+    public final void enableReader() {
+        onNFCDisableCardEm();
+        onNFCEnableReader();
     }
 
-    @JavascriptInterface
-    public final void enable() {
-        onNFCEnable();
+    public final void enableCardEm() {
+        onNFCDisableReader();
+        onNFCEnableCardEm();
     }
 
     @Override
@@ -32,11 +37,15 @@ public abstract class NativeNFCActivity extends Activity {
         mNfcAdapter = NfcAdapter.getDefaultAdapter(this);
     }
 
-    protected void onNFCDisable() {
+    protected void onNFCDisableReader() {
+        mNfcMode = NfcMode.DISABLED;
+
         mNfcAdapter.disableReaderMode(this);
     }
 
-    protected void onNFCEnable() {
+    protected void onNFCEnableReader() {
+        mNfcMode = NfcMode.READER;
+
         mNfcAdapter.enableReaderMode(this, new NfcAdapter.ReaderCallback() {
             @Override
             public void onTagDiscovered(final Tag tag) {
@@ -52,10 +61,19 @@ public abstract class NativeNFCActivity extends Activity {
         }, NfcAdapter.FLAG_READER_NFC_A | NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK, null);
     }
 
+    protected void onNFCDisableCardEm() {
+        mNfcMode = NfcMode.DISABLED;
+    }
+
+    protected void onNFCEnableCardEm() {
+        mNfcMode = NfcMode.CARD_EM;
+    }
+
     @Override
     protected void onPause() {
         super.onPause();
 
-        onNFCDisable();
+        onNFCDisableReader();
+        onNFCDisableCardEm();
     }
 }

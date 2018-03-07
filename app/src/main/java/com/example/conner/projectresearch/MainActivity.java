@@ -2,32 +2,36 @@ package com.example.conner.projectresearch;
 
 import android.content.res.Configuration;
 import android.os.Bundle;
-import android.webkit.WebResourceError;
-import android.webkit.WebResourceRequest;
-import android.webkit.WebSettings;
-import android.webkit.WebView;
-import android.webkit.WebViewClient;
-import android.widget.Toast;
+import android.view.View;
+import android.widget.Button;
+import android.widget.TextView;
 
 public class MainActivity extends NativeNFCActivity {
-    private WebView mWebView;
-    private WebSettings mWebSettings;
-    private WebViewClient mWebViewClient;
+    private Button mReaderButton;
+    private Button mCardEmButton;
+    private TextView mCardIDView;
 
-    @Override
-    public void onBackPressed() {
-        if(mWebView.canGoBack()) {
-            mWebView.goBack();
-        } else {
-            finish();
+    private String toHexString(byte[] bytes) {
+        if(bytes.length < 1) {
+            return "";
         }
+
+        String hex = "0x";
+        String nybble_chars[] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B", "C",
+            "D", "E", "F"};
+
+        for(int i = 0; i < bytes.length; i++) {
+            hex += nybble_chars[(bytes[i] >> 4) & 0xF];
+            hex += nybble_chars[bytes[i] & 0xF];
+        }
+
+        return hex;
     }
 
     @Override
     void onCardData(byte[] bytes) {
-        CharSequence text = "test: " + bytes.toString();
-        Toast toast = Toast.makeText(getApplicationContext(), text, Toast.LENGTH_SHORT);
-        toast.show();
+        CharSequence text = toHexString(bytes);
+        mCardIDView.setText(text);
     }
 
     @Override
@@ -35,12 +39,11 @@ public class MainActivity extends NativeNFCActivity {
         super.onCreate(savedInstanceState);
 
         /* Initialize the UI */
-        setContentView(R.layout.activity_main);
+        setContentView(R.layout.activity_main_debug);
 
-        configureWebView(savedInstanceState);
-
-        /* Install the Web app NFC interface */
-        mWebView.addJavascriptInterface(this, "NativeNFC");
+        mReaderButton = (Button) findViewById(R.id.reader_button);
+        mCardEmButton = (Button) findViewById(R.id.card_em_button);
+        mCardIDView = (TextView) findViewById(R.id.card_id);
     }
 
     @Override
@@ -51,40 +54,28 @@ public class MainActivity extends NativeNFCActivity {
     @Override
     protected void onResume() {
         super.onResume();
-
-        mWebView.loadUrl("http://www.example.com/");
-        mWebView.evaluateJavascript("NativeNFC.enable();", null);
     }
 
-    @Override
-    public void onSaveInstanceState(Bundle outState) {
-        mWebView.saveState(outState);
+    public void toggleReader(View v) {
+        if(mNfcMode != NfcMode.READER) {
+            enableReader();
+            mCardIDView.setVisibility(View.VISIBLE);
+            mReaderButton.setText("Disable Reader");
+        } else {
+            disableReader();
+            mCardIDView.setVisibility(View.INVISIBLE);
+            mCardIDView.setText("Card ID");
+            mReaderButton.setText("Reader");
+        }
     }
 
-    /**
-     * Configures the WebView with necessary options for running the Web app
-     *
-     * @param savedInstanceState State bundle to restore WebView state from
-     */
-    private void configureWebView(Bundle savedInstanceState) {
-        mWebView = (WebView) findViewById(R.id.MainWebView);
-        mWebSettings = mWebView.getSettings();
-
-        mWebViewClient = new WebViewClient() {
-            @Override
-            public void onReceivedError(WebView view, WebResourceRequest request,
-                                        WebResourceError error) {
-                super.onReceivedError(view, request, error);
-            }
-        };
-
-        mWebView.setWebViewClient(mWebViewClient);
-
-        mWebSettings.setJavaScriptEnabled(true);
-
-        /* Restore the state of the WebView if the Activity is being restarted */
-        if(savedInstanceState != null) {
-            mWebView.restoreState(savedInstanceState);
+    public void toggleCardEm(View v) {
+        if(mNfcMode != NfcMode.CARD_EM) {
+            enableCardEm();
+            mCardEmButton.setText("Disable Card Emulation");
+        } else {
+            disableCardEm();
+            mCardEmButton.setText("Card Emulation");
         }
     }
 }
