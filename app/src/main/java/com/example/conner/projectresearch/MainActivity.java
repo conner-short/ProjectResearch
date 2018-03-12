@@ -1,15 +1,20 @@
 package com.example.conner.projectresearch;
 
+import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.View;
 import android.widget.Button;
+import android.widget.CompoundButton;
+import android.widget.Switch;
 import android.widget.TextView;
 
 public class MainActivity extends NativeNFCActivity {
-    private Button mReaderButton;
-    private Button mCardEmButton;
-    private TextView mCardIDView;
+    private Switch mModeSwitch;
+    private Button mNFCControlBtn;
+    private TextView mStatusText;
+    private TextView mSwitchLabel;
 
     private String toHexString(byte[] bytes) {
         if(bytes.length < 1) {
@@ -29,21 +34,64 @@ public class MainActivity extends NativeNFCActivity {
     }
 
     @Override
-    void onCardData(byte[] bytes) {
-        CharSequence text = toHexString(bytes);
-        mCardIDView.setText(text);
+    void onReaderConnect() {
+        mStatusText.setText(R.string.reader_connected);
+    }
+
+    @Override
+    void onReaderDisconnect() {
+        mStatusText.setText(R.string.reader_disconnected);
+    }
+
+    @Override
+    void onCardConnect() {
+        mStatusText.setText(R.string.card_connected);
+    }
+
+    @Override
+    void onCardDisconnect() {
+        mStatusText.setText(R.string.card_disconnected);
     }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-
         /* Initialize the UI */
         setContentView(R.layout.activity_main_debug);
 
-        mReaderButton = (Button) findViewById(R.id.reader_button);
-        mCardEmButton = (Button) findViewById(R.id.card_em_button);
-        mCardIDView = (TextView) findViewById(R.id.card_id);
+        mModeSwitch = (Switch)findViewById(R.id.mode_switch);
+        mNFCControlBtn = (Button)findViewById(R.id.enable_button);
+        mStatusText = (TextView)findViewById(R.id.status);
+        mSwitchLabel = (TextView)findViewById(R.id.switch_label);
+
+        mNFCControlBtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                if(isNfcEnabled()) {
+                    /* Disable NFC */
+                    disableNfc();
+                } else {
+                    /* Enable NFC */
+                    enableNfc();
+                }
+            }
+        });
+
+        mModeSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton compoundButton, boolean b) {
+                if(b) {
+                    /* Reader */
+                    setNfcMode(NfcMode.READER);
+                } else {
+                    /* Card emulation */
+                    setNfcMode(NfcMode.CARD_EM);
+                }
+            }
+        });
+
+        /* Called at the end to prevent triggering NFC mode/status change events before UI elements
+         * instantiated */
+        super.onCreate(savedInstanceState);
     }
 
     @Override
@@ -56,26 +104,25 @@ public class MainActivity extends NativeNFCActivity {
         super.onResume();
     }
 
-    public void toggleReader(View v) {
-        if(mNfcMode != NfcMode.READER) {
-            enableReader();
-            mCardIDView.setVisibility(View.VISIBLE);
-            mReaderButton.setText("Disable Reader");
-        } else {
-            disableReader();
-            mCardIDView.setVisibility(View.INVISIBLE);
-            mCardIDView.setText("Card ID");
-            mReaderButton.setText("Reader");
+
+    void onNfcModeChange(NfcMode mode) {
+        switch(mode) {
+            case READER:
+                mSwitchLabel.setText(R.string.ui_reader);
+                break;
+
+            case CARD_EM:
+                mSwitchLabel.setText(R.string.ui_card_emulation);
+                break;
         }
     }
 
-    public void toggleCardEm(View v) {
-        if(mNfcMode != NfcMode.CARD_EM) {
-            enableCardEm();
-            mCardEmButton.setText("Disable Card Emulation");
+    void onNfcStatusChange(boolean nfcIsEnabled) {
+        if(nfcIsEnabled) {
+            mNFCControlBtn.setText(R.string.ui_disable_nfc);
         } else {
-            disableCardEm();
-            mCardEmButton.setText("Card Emulation");
+            mNFCControlBtn.setText(R.string.ui_enable_nfc);
+            mStatusText.setText("");
         }
     }
 }
