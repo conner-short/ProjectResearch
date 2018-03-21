@@ -1,56 +1,46 @@
 package com.example.conner.projectresearch;
 
-import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.os.Bundle;
-import android.util.Log;
 import android.view.View;
 import android.widget.Button;
 import android.widget.CompoundButton;
+import android.widget.EditText;
 import android.widget.Switch;
 import android.widget.TextView;
 
 public class MainActivity extends NativeNFCActivity {
-    private Switch mModeSwitch;
-    private Button mNFCControlBtn;
-    private TextView mStatusText;
-    private TextView mSwitchLabel;
+    private Switch modeSwitch;
+    private Button nfcControlBtn;
+    private TextView statusText;
+    private TextView switchLabel;
+    private EditText messageText;
 
-    private String toHexString(byte[] bytes) {
-        if(bytes.length < 1) {
-            return "";
+    @Override
+    void onConnect() {
+        switch(getNfcMode()) {
+            case 0: /* Card em */
+                statusText.setText(R.string.card_connected);
+                break;
+
+            case 1: /* Reader */
+                statusText.setText(R.string.reader_connected);
+                break;
+
+            default:
+                throw new RuntimeException("Unreachable");
         }
 
-        String hex = "0x";
-        String nybble_chars[] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B", "C",
-            "D", "E", "F"};
-
-        for(int i = 0; i < bytes.length; i++) {
-            hex += nybble_chars[(bytes[i] >> 4) & 0xF];
-            hex += nybble_chars[bytes[i] & 0xF];
-        }
-
-        return hex;
+        send(messageText.getText().toString());
     }
 
     @Override
-    void onReaderConnect() {
-        mStatusText.setText(R.string.reader_connected);
+    void onDisconnect() {
     }
 
     @Override
-    void onReaderDisconnect() {
-        mStatusText.setText(R.string.reader_disconnected);
-    }
-
-    @Override
-    void onCardConnect() {
-        mStatusText.setText(R.string.card_connected);
-    }
-
-    @Override
-    void onCardDisconnect() {
-        mStatusText.setText(R.string.card_disconnected);
+    void onNfcReceive(String str) {
+        statusText.setText(str);
     }
 
     @Override
@@ -58,33 +48,41 @@ public class MainActivity extends NativeNFCActivity {
         /* Initialize the UI */
         setContentView(R.layout.activity_main_debug);
 
-        mModeSwitch = (Switch)findViewById(R.id.mode_switch);
-        mNFCControlBtn = (Button)findViewById(R.id.enable_button);
-        mStatusText = (TextView)findViewById(R.id.status);
-        mSwitchLabel = (TextView)findViewById(R.id.switch_label);
+        modeSwitch = (Switch)findViewById(R.id.mode_switch);
+        nfcControlBtn = (Button)findViewById(R.id.enable_button);
+        statusText = (TextView)findViewById(R.id.status);
+        switchLabel = (TextView)findViewById(R.id.switch_label);
+        messageText = (EditText)findViewById(R.id.message_text);
 
-        mNFCControlBtn.setOnClickListener(new View.OnClickListener() {
+        nfcControlBtn.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 if(isNfcEnabled()) {
-                    /* Disable NFC */
                     disableNfc();
+
+                    nfcControlBtn.setText(R.string.ui_enable_nfc);
+                    statusText.setText("");
                 } else {
-                    /* Enable NFC */
                     enableNfc();
+
+                    nfcControlBtn.setText(R.string.ui_disable_nfc);
                 }
             }
         });
 
-        mModeSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+        modeSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override
             public void onCheckedChanged(CompoundButton compoundButton, boolean b) {
                 if(b) {
                     /* Reader */
                     setNfcMode(NfcMode.READER);
+
+                    switchLabel.setText(R.string.ui_reader);
                 } else {
                     /* Card emulation */
                     setNfcMode(NfcMode.CARD_EM);
+
+                    switchLabel.setText(R.string.ui_card_emulation);
                 }
             }
         });
@@ -102,27 +100,5 @@ public class MainActivity extends NativeNFCActivity {
     @Override
     protected void onResume() {
         super.onResume();
-    }
-
-
-    void onNfcModeChange(NfcMode mode) {
-        switch(mode) {
-            case READER:
-                mSwitchLabel.setText(R.string.ui_reader);
-                break;
-
-            case CARD_EM:
-                mSwitchLabel.setText(R.string.ui_card_emulation);
-                break;
-        }
-    }
-
-    void onNfcStatusChange(boolean nfcIsEnabled) {
-        if(nfcIsEnabled) {
-            mNFCControlBtn.setText(R.string.ui_disable_nfc);
-        } else {
-            mNFCControlBtn.setText(R.string.ui_enable_nfc);
-            mStatusText.setText("");
-        }
     }
 }

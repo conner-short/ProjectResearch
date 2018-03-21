@@ -16,8 +16,10 @@ import android.os.Messenger;
 import android.support.annotation.Nullable;
 import android.support.v4.content.LocalBroadcastManager;
 import android.util.Log;
+import android.webkit.JavascriptInterface;
 
 import java.io.IOException;
+import java.util.List;
 
 /**
  * Class defining NFC activites for main Activity.
@@ -25,90 +27,146 @@ import java.io.IOException;
 public abstract class NativeNFCActivity extends Activity {
     protected enum NfcMode {READER, CARD_EM};
 
-    private NfcMode mNfcMode;
-    private boolean mNfcEnabled;
-    private NfcAdapter mNfcAdapter;
+    private NfcMode nfcMode;
+    private boolean nfcEnabled;
+    private NfcAdapter nfcAdapter;
+
+    private IsoDep tagInterface;
+    private boolean tagConnected[]; /* This is an array type so that it can be written from another task */
 
     /* Service connection variables */
-    private Intent mServiceIntent;
-    private Messenger mServiceMessenger;
-    private IntentFilter mServiceIntentFilter;
-    private BroadcastReceiver mBroadcastReceiver;
-    private boolean mServiceIsBound;
+    private Intent serviceIntent;
+    private Messenger serviceMessenger;
+    private IntentFilter serviceIntentFilter;
+    private BroadcastReceiver broadcastReceiver;
+    private boolean serviceIsBound;
 
-    private ServiceConnection mServiceConn;
+    private ServiceConnection serviceConn;
+
+    private int dataSize;
+
+    private String receivedString;
 
     /* Implemented by UI class */
-    abstract void onCardConnect();
-    abstract void onCardDisconnect();
-    abstract void onReaderConnect();
-    abstract void onReaderDisconnect();
-    abstract void onNfcModeChange(NfcMode mode);
-    abstract void onNfcStatusChange(boolean nfcIsEnabled);
+    abstract void onConnect();
+    abstract void onDisconnect();
+    abstract void onNfcReceive(String str);
+
+    @JavascriptInterface
+    public final void enable() {}
+
+    @JavascriptInterface
+    public final void disable() {}
+
+    @JavascriptInterface
+    public final void send(String str) {
+        if((!nfcEnabled) || (!tagConnected[0])) {
+            return;
+        }
+
+        if(nfcMode == NfcMode.READER) {
+            /* Get commands for sending string */
+            List<byte[]> sendCommands = NativeNFCCommands.getCmdSeqTxStr(str.getBytes(),
+                    dataSize);
+
+            new ReaderSendTask().execute(tagConnected, tagInterface, sendCommands);
+        } else {
+            /* TODO: Send for card em mode */
+        }
+    }
+
+    @JavascriptInterface
+    public final void disconnect() {}
+
+    @JavascriptInterface
+    public final void setNfcMode(int mode) {
+        /* 0 for card emulation, 1 for reader */
+        setNfcMode((mode == 0) ? NfcMode.CARD_EM: NfcMode.READER);
+    }
+
+    @JavascriptInterface
+    public final int getNfcMode() {
+        return (nfcMode == NfcMode.CARD_EM) ? 0 : 1;
+    }
+
+    @JavascriptInterface
+    protected final boolean isNfcEnabled() {
+        return nfcEnabled;
+    }
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        mNfcMode = NfcMode.CARD_EM;
-        mNfcEnabled = false;
+        tagConnected = new boolean[1];
 
-        mServiceIsBound = false;
+        nfcMode = NfcMode.CARD_EM;
+        nfcEnabled = false;
 
-        mNfcAdapter = NfcAdapter.getDefaultAdapter(this);
+        serviceIsBound = false;
+
+        nfcAdapter = NfcAdapter.getDefaultAdapter(this);
 
         Context c = getApplicationContext();
-        mServiceIntent = new Intent(c, NativeNFCCardService.class);
+        serviceIntent = new Intent(c, NativeNFCCardService.class);
 
         /* Add actions to the service intent filter */
-        mServiceIntentFilter = new IntentFilter();
-        mServiceIntentFilter.addAction(NativeNFCCardService.ACTION_CONNECT);
-        mServiceIntentFilter.addAction(NativeNFCCardService.ACTION_DISCONNECT);
+        serviceIntentFilter = new IntentFilter();
+        serviceIntentFilter.addAction(NativeNFCCardService.ACTION_CONNECT);
+        serviceIntentFilter.addAction(NativeNFCCardService.ACTION_DISCONNECT);
+        serviceIntentFilter.addAction(NativeNFCCardService.ACTION_RECEIVED);
 
         /* Create the broadcast receiver and give it a handler method */
-        mBroadcastReceiver = new BroadcastReceiver() {
+        broadcastReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
                 String action = intent.getAction();
 
                 if(action.equals(NativeNFCCardService.ACTION_CONNECT)) {
-                    onCardConnect();
+                    tagConnected[0] = true;
+                    onConnect();
                 }
 
                 else if(action.equals(NativeNFCCardService.ACTION_DISCONNECT)) {
-                    onCardDisconnect();
+                    tagConnected[0] = false;
+                    onDisconnect();
+                }
+
+                else if(action.equals(NativeNFCCardService.ACTION_RECEIVED)) {
+                    receivedString = intent.getStringExtra(Intent.EXTRA_TEXT);
+                    Log.d(getClass().getName(), receivedString);
+                    onNfcReceive(receivedString);
                 }
             }
         };
 
         /* Give the service connection handler methods */
-        mServiceConn = new ServiceConnection() {
+        serviceConn = new ServiceConnection() {
             @Override
             public void onServiceConnected(ComponentName componentName, IBinder iBinder) {
-                mServiceMessenger = new Messenger(iBinder);
+                serviceMessenger = new Messenger(iBinder);
 
                 LocalBroadcastManager l = LocalBroadcastManager.getInstance(NativeNFCActivity.this);
-                l.registerReceiver(mBroadcastReceiver, mServiceIntentFilter);
+                l.registerReceiver(broadcastReceiver, serviceIntentFilter);
             }
 
             @Override
             public void onServiceDisconnected(ComponentName componentName) {
             }
         };
-
-        onNfcModeChange(mNfcMode);
-        onNfcStatusChange(mNfcEnabled);
     }
 
     protected void disableReader() {
-        mNfcAdapter.disableReaderMode(this);
+        nfcAdapter.disableReaderMode(this);
     }
 
     protected void enableReader() {
-        mNfcAdapter.enableReaderMode(this, new NfcAdapter.ReaderCallback() {
+        nfcAdapter.enableReaderMode(this, new NfcAdapter.ReaderCallback() {
             @Override
             public void onTagDiscovered(final Tag tag) {
-                IsoDep tagInterface = IsoDep.get(tag);
+                tagConnected[0] = false;
+
+                tagInterface = IsoDep.get(tag);
 
                 if(tagInterface != null) {
                     /* Connect to the tag */
@@ -119,6 +177,9 @@ public abstract class NativeNFCActivity extends Activity {
                         return;
                     }
 
+                    /* Save transceive length */
+                    dataSize = tagInterface.getMaxTransceiveLength();
+
                     byte[] res;
 
                     /* Check for the app AID */
@@ -126,63 +187,41 @@ public abstract class NativeNFCActivity extends Activity {
                         res = tagInterface.transceive(NativeNFCCommands.getCmdSelectAid());
                     } catch(IOException e) {
                         Log.d(getClass().getName(), "IsoDep AID selection failed");
-
-                        try {
-                            tagInterface.close();
-                        } catch(IOException f) {
-                            Log.d(getClass().getName(), "IsoDep close failed");
-                        }
-
                         return;
                     }
 
-                    if(NativeNFCCommands.isResponseOk(res)) {
+                    if(NativeNFCCommands.getResponseType(res) == NativeNFCCommands.RESPONSE_TYPE.R_OK) {
+                        tagConnected[0] = true;
+
                         /* Notify UI thread that we're connected */
                         runOnUiThread(new Runnable() {
                             @Override
                             public void run() {
-                                onReaderConnect();
+                                onConnect();
                             }
                         });
                     }
-
-                    /* Disconnect */
-                    try {
-                        tagInterface.close();
-                    } catch(IOException e) {
-                        Log.d(getClass().getName(), "IsoDep close failed");
-                    }
-
-                    /* Notify UI thread that we're disconnected */
-                    runOnUiThread(new Runnable() {
-                        @Override
-                        public void run() {
-                            onReaderDisconnect();
-                        }
-                    });
-
-                    return;
                 }
             }
         }, NfcAdapter.FLAG_READER_NFC_A | NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK, null);
 
-        mNfcMode = NfcMode.READER;
+        nfcMode = NfcMode.READER;
     }
 
     protected void disableCardEm() {
         /* Disconnect from the service */
-        if(mServiceIsBound) {
-            unbindService(mServiceConn);
+        if(serviceIsBound) {
+            unbindService(serviceConn);
 
-            mServiceIsBound = false;
+            serviceIsBound = false;
         }
     }
 
     protected void enableCardEm() {
-        bindService(mServiceIntent, mServiceConn, Context.BIND_AUTO_CREATE);
+        bindService(serviceIntent, serviceConn, Context.BIND_AUTO_CREATE);
 
-        mServiceIsBound = true;
-        mNfcMode = NfcMode.CARD_EM;
+        serviceIsBound = true;
+        nfcMode = NfcMode.CARD_EM;
     }
 
     @Override
@@ -193,7 +232,7 @@ public abstract class NativeNFCActivity extends Activity {
     }
 
     protected void setNfcMode(NfcMode m) {
-        if(mNfcEnabled) {
+        if(nfcEnabled) {
             switch(m) {
                 case READER:
                     disableCardEm();
@@ -206,24 +245,15 @@ public abstract class NativeNFCActivity extends Activity {
                     break;
 
                 default:
-                    Log.d(getClass().getName(), "Invalid NFC mode, disabling...");
-
-                    disableNfc();
-                    mNfcMode = NfcMode.CARD_EM;
-
-                    onNfcModeChange(mNfcMode);
-
-                    return;
+                    throw new RuntimeException("Unreachable");
             }
         }
 
-        mNfcMode = m;
-
-        onNfcModeChange(mNfcMode);
+        nfcMode = m;
     }
 
     protected void enableNfc() {
-        switch(mNfcMode) {
+        switch(nfcMode) {
             case READER:
                 enableReader();
                 break;
@@ -233,21 +263,18 @@ public abstract class NativeNFCActivity extends Activity {
                 break;
         }
 
-        mNfcEnabled = true;
-
-        onNfcStatusChange(mNfcEnabled);
+        nfcEnabled = true;
     }
 
     protected void disableNfc() {
         disableReader();
         disableCardEm();
 
-        mNfcEnabled = false;
-
-        onNfcStatusChange(mNfcEnabled);
+        nfcEnabled = false;
     }
 
-    protected boolean isNfcEnabled() {
-        return mNfcEnabled;
+    public void onReaderSendComplete(boolean success) {
+        if(!success) {
+        }
     }
 }
