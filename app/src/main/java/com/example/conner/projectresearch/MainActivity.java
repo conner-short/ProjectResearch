@@ -9,7 +9,7 @@ import android.widget.EditText;
 import android.widget.Switch;
 import android.widget.TextView;
 
-public class MainActivity extends NativeNFCActivity {
+public class MainActivity extends NfcActivity {
     private Switch modeSwitch;
     private Button nfcControlBtn;
     private TextView statusText;
@@ -39,8 +39,15 @@ public class MainActivity extends NativeNFCActivity {
     }
 
     @Override
-    void onNfcReceive(String str) {
-        statusText.setText(str);
+    void onSendComplete(boolean success) {
+        receive();
+    }
+
+    @Override
+    void onReceiveComplete(boolean success, String str) {
+        if(success) {
+            statusText.setText(str);
+        }
     }
 
     @Override

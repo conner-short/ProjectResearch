@@ -19,12 +19,13 @@ import android.util.Log;
 import android.webkit.JavascriptInterface;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
  * Class defining NFC activites for main Activity.
  */
-public abstract class NativeNFCActivity extends Activity {
+public abstract class NfcActivity extends Activity implements ReaderTaskInterface {
     protected enum NfcMode {READER, CARD_EM};
 
     private NfcMode nfcMode;
@@ -32,7 +33,6 @@ public abstract class NativeNFCActivity extends Activity {
     private NfcAdapter nfcAdapter;
 
     private IsoDep tagInterface;
-    private boolean tagConnected[]; /* This is an array type so that it can be written from another task */
 
     /* Service connection variables */
     private Intent serviceIntent;
@@ -43,14 +43,17 @@ public abstract class NativeNFCActivity extends Activity {
 
     private ServiceConnection serviceConn;
 
-    private int dataSize;
-
     private String receivedString;
+    private boolean newReceivedData;
+    private boolean waitingForReceivedData;
+
+    private int fragmentSize = 0;
 
     /* Implemented by UI class */
     abstract void onConnect();
     abstract void onDisconnect();
-    abstract void onNfcReceive(String str);
+    abstract void onSendComplete(boolean success);
+    abstract void onReceiveComplete(boolean success, String str);
 
     @JavascriptInterface
     public final void enable() {}
@@ -60,18 +63,55 @@ public abstract class NativeNFCActivity extends Activity {
 
     @JavascriptInterface
     public final void send(String str) {
-        if((!nfcEnabled) || (!tagConnected[0])) {
+        if(!nfcEnabled) {
             return;
         }
 
         if(nfcMode == NfcMode.READER) {
-            /* Get commands for sending string */
-            List<byte[]> sendCommands = NativeNFCCommands.getCmdSeqTxStr(str.getBytes(),
-                    dataSize);
+            /* Start a transmit exchange with the card */
+            NfcCommand txCmd = new NfcCommand(NfcCommand.TYPE.SEND);
+            txCmd.setDataSize(fragmentSize);
+            txCmd.setPayload(str);
 
-            new ReaderSendTask().execute(tagConnected, tagInterface, sendCommands);
+            List<NfcCommand> cmdList = new ArrayList<>();
+            cmdList.add(txCmd);
+
+            ReaderCmdTask sendTask = new ReaderCmdTask(tagInterface, cmdList, this);
+            sendTask.execute();
         } else {
-            /* TODO: Send for card em mode */
+            /* Send the string to the card emulation service */
+            LocalBroadcastManager l = LocalBroadcastManager.getInstance(getApplicationContext());
+
+            Intent intent = new Intent(NfcCardService.ACTION_SEND);
+            intent.putExtra(Intent.EXTRA_TEXT, str);
+
+            l.sendBroadcast(intent);
+
+            onSendComplete(true);
+        }
+    }
+    @JavascriptInterface
+    public final void receive() {
+        if(!nfcEnabled) {
+            return;
+        }
+
+        if(nfcMode == NfcMode.READER) {
+            NfcCommand rxCmd = new NfcCommand(NfcCommand.TYPE.READ);
+            rxCmd.setDataSize(fragmentSize);
+
+            List<NfcCommand> cmdList = new ArrayList<>();
+            cmdList.add(rxCmd);
+
+            ReaderCmdTask receiveTask = new ReaderCmdTask(tagInterface, cmdList, this);
+            receiveTask.execute();
+        } else {
+            if(newReceivedData) {
+                newReceivedData = false;
+                onReceiveComplete(true, receivedString);
+            } else {
+                waitingForReceivedData = true;
+            }
         }
     }
 
@@ -98,23 +138,25 @@ public abstract class NativeNFCActivity extends Activity {
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        tagConnected = new boolean[1];
-
         nfcMode = NfcMode.CARD_EM;
         nfcEnabled = false;
 
         serviceIsBound = false;
 
+        receivedString = null;
+        newReceivedData = false;
+        waitingForReceivedData = false;
+
         nfcAdapter = NfcAdapter.getDefaultAdapter(this);
 
         Context c = getApplicationContext();
-        serviceIntent = new Intent(c, NativeNFCCardService.class);
+        serviceIntent = new Intent(c, NfcCardService.class);
 
         /* Add actions to the service intent filter */
         serviceIntentFilter = new IntentFilter();
-        serviceIntentFilter.addAction(NativeNFCCardService.ACTION_CONNECT);
-        serviceIntentFilter.addAction(NativeNFCCardService.ACTION_DISCONNECT);
-        serviceIntentFilter.addAction(NativeNFCCardService.ACTION_RECEIVED);
+        serviceIntentFilter.addAction(NfcCardService.ACTION_CONNECT);
+        serviceIntentFilter.addAction(NfcCardService.ACTION_DISCONNECT);
+        serviceIntentFilter.addAction(NfcCardService.ACTION_RECEIVED);
 
         /* Create the broadcast receiver and give it a handler method */
         broadcastReceiver = new BroadcastReceiver() {
@@ -122,20 +164,29 @@ public abstract class NativeNFCActivity extends Activity {
             public void onReceive(Context context, Intent intent) {
                 String action = intent.getAction();
 
-                if(action.equals(NativeNFCCardService.ACTION_CONNECT)) {
-                    tagConnected[0] = true;
-                    onConnect();
-                }
+                if(action != null) {
+                    switch(action) {
+                        case NfcCardService.ACTION_CONNECT:
+                            onConnect();
+                            break;
 
-                else if(action.equals(NativeNFCCardService.ACTION_DISCONNECT)) {
-                    tagConnected[0] = false;
-                    onDisconnect();
-                }
+                        case NfcCardService.ACTION_DISCONNECT:
+                            onDisconnect();
+                            break;
 
-                else if(action.equals(NativeNFCCardService.ACTION_RECEIVED)) {
-                    receivedString = intent.getStringExtra(Intent.EXTRA_TEXT);
-                    Log.d(getClass().getName(), receivedString);
-                    onNfcReceive(receivedString);
+                        case NfcCardService.ACTION_RECEIVED:
+                            receivedString = intent.getStringExtra(Intent.EXTRA_TEXT);
+
+                            if(waitingForReceivedData) {
+                                waitingForReceivedData = false;
+                                newReceivedData = false;
+                                onReceiveComplete(true, receivedString);
+                            } else {
+                                newReceivedData = true;
+                            }
+
+                            break;
+                    }
                 }
             }
         };
@@ -146,7 +197,7 @@ public abstract class NativeNFCActivity extends Activity {
             public void onServiceConnected(ComponentName componentName, IBinder iBinder) {
                 serviceMessenger = new Messenger(iBinder);
 
-                LocalBroadcastManager l = LocalBroadcastManager.getInstance(NativeNFCActivity.this);
+                LocalBroadcastManager l = LocalBroadcastManager.getInstance(NfcActivity.this);
                 l.registerReceiver(broadcastReceiver, serviceIntentFilter);
             }
 
@@ -164,8 +215,6 @@ public abstract class NativeNFCActivity extends Activity {
         nfcAdapter.enableReaderMode(this, new NfcAdapter.ReaderCallback() {
             @Override
             public void onTagDiscovered(final Tag tag) {
-                tagConnected[0] = false;
-
                 tagInterface = IsoDep.get(tag);
 
                 if(tagInterface != null) {
@@ -177,30 +226,30 @@ public abstract class NativeNFCActivity extends Activity {
                         return;
                     }
 
-                    /* Save transceive length */
-                    dataSize = tagInterface.getMaxTransceiveLength();
-
-                    byte[] res;
-
-                    /* Check for the app AID */
-                    try {
-                        res = tagInterface.transceive(NativeNFCCommands.getCmdSelectAid());
-                    } catch(IOException e) {
+                    /* Select our app */
+                    NfcCommand selectCmd = new NfcCommand(NfcCommand.TYPE.SELECT_AID);
+                    if(!selectCmd.send(tagInterface)) {
                         Log.d(getClass().getName(), "IsoDep AID selection failed");
                         return;
                     }
 
-                    if(NativeNFCCommands.getResponseType(res) == NativeNFCCommands.RESPONSE_TYPE.R_OK) {
-                        tagConnected[0] = true;
+                    /* Set channel fragmentation size */
+                    fragmentSize = tagInterface.getMaxTransceiveLength();
+                    NfcCommand setDataSize = new NfcCommand(NfcCommand.TYPE.SET_DATA_SIZE);
+                    setDataSize.setDataSize(fragmentSize);
 
-                        /* Notify UI thread that we're connected */
-                        runOnUiThread(new Runnable() {
-                            @Override
-                            public void run() {
-                                onConnect();
-                            }
-                        });
+                    if(!setDataSize.send(tagInterface)) {
+                        Log.d(getClass().getName(), "NFC channel fragmentation size select failed");
+                        return;
                     }
+
+                    /* Notify UI thread that we're connected */
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            onConnect();
+                        }
+                    });
                 }
             }
         }, NfcAdapter.FLAG_READER_NFC_A | NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK, null);
@@ -273,8 +322,16 @@ public abstract class NativeNFCActivity extends Activity {
         nfcEnabled = false;
     }
 
-    public void onReaderSendComplete(boolean success) {
-        if(!success) {
+    @Override
+    public void onComplete(boolean status, List<NfcCommand> commands) {
+        switch(commands.get(0).getType()) {
+            case SEND:
+                onSendComplete(status);
+                break;
+
+            case READ:
+                onReceiveComplete(status, commands.get(0).getResponsePayloadString());
+                break;
         }
     }
 }
