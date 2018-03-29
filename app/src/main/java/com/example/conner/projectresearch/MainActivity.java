@@ -1,102 +1,129 @@
 package com.example.conner.projectresearch;
 
+import android.content.Intent;
 import android.content.res.Configuration;
+import android.net.Uri;
 import android.os.Bundle;
-import android.view.View;
-import android.widget.Button;
-import android.widget.CompoundButton;
-import android.widget.EditText;
-import android.widget.Switch;
-import android.widget.TextView;
+import android.support.annotation.Nullable;
+import android.util.Log;
+import android.webkit.ConsoleMessage;
+import android.webkit.JsResult;
+import android.webkit.WebChromeClient;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
+import android.widget.Toast;
 
 public class MainActivity extends NfcActivity {
-    private Switch modeSwitch;
-    private Button nfcControlBtn;
-    private TextView statusText;
-    private TextView switchLabel;
-    private EditText messageText;
+    private WebView mainWebView;
+    private WebSettings webSettings;
+
+    private String appDomain = "192.168.1.70";
 
     @Override
     void onConnect() {
-        switch(getNfcMode()) {
-            case 0: /* Card em */
-                statusText.setText(R.string.card_connected);
-                break;
-
-            case 1: /* Reader */
-                statusText.setText(R.string.reader_connected);
-                break;
-
-            default:
-                throw new RuntimeException("Unreachable");
-        }
-
-        send(messageText.getText().toString());
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                mainWebView.evaluateJavascript("nfc.onConnect();", null);
+            }
+        });
     }
 
     @Override
     void onDisconnect() {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                mainWebView.evaluateJavascript("nfc.onDisconnect();", null);
+            }
+        });
     }
 
     @Override
     void onSendComplete(boolean success) {
-        receive();
+        if(success) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    mainWebView.evaluateJavascript("nfc.onSendComplete();", null);
+                }
+            });
+        }
     }
 
     @Override
     void onReceiveComplete(boolean success, String str) {
         if(success) {
-            statusText.setText(str);
+            /* Escape any quotes in the string to prevent execution of string */
+            String escaped_str = str;
+            escaped_str = escaped_str.replace("\'", "\\\'");
+            escaped_str = escaped_str.replace("\"", "\\\"");
+
+            runOnUiThread(new StrRunnable(escaped_str) {
+                @Override
+                public void run() {
+                    mainWebView.evaluateJavascript("nfc.onReceive(\'" + mStr + "\');", null);
+                }
+            });
         }
     }
 
     @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        /* Initialize the UI */
-        setContentView(R.layout.activity_main_debug);
-
-        modeSwitch = (Switch)findViewById(R.id.mode_switch);
-        nfcControlBtn = (Button)findViewById(R.id.enable_button);
-        statusText = (TextView)findViewById(R.id.status);
-        switchLabel = (TextView)findViewById(R.id.switch_label);
-        messageText = (EditText)findViewById(R.id.message_text);
-
-        nfcControlBtn.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                if(isNfcEnabled()) {
-                    disableNfc();
-
-                    nfcControlBtn.setText(R.string.ui_enable_nfc);
-                    statusText.setText("");
-                } else {
-                    enableNfc();
-
-                    nfcControlBtn.setText(R.string.ui_disable_nfc);
-                }
-            }
-        });
-
-        modeSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
-            @Override
-            public void onCheckedChanged(CompoundButton compoundButton, boolean b) {
-                if(b) {
-                    /* Reader */
-                    setNfcMode(NfcMode.READER);
-
-                    switchLabel.setText(R.string.ui_reader);
-                } else {
-                    /* Card emulation */
-                    setNfcMode(NfcMode.CARD_EM);
-
-                    switchLabel.setText(R.string.ui_card_emulation);
-                }
-            }
-        });
-
-        /* Called at the end to prevent triggering NFC mode/status change events before UI elements
-         * instantiated */
+    protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        setContentView(R.layout.activity_main);
+
+        mainWebView = (WebView)findViewById(R.id.main_web_view);
+
+        mainWebView.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                if(Uri.parse(url).getHost().equals(appDomain)) {
+                    return false;
+                }
+
+                Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                view.getContext().startActivity(intent);
+
+                return true;
+            }
+        });
+
+        mainWebView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onJsAlert(WebView view, String url, String message, JsResult result) {
+                /* In the app, JS alerts should only be used for debugging */
+                Toast.makeText(MainActivity.this, message, Toast.LENGTH_SHORT).show();
+
+                result.confirm();
+                return true;
+            }
+
+            @Override
+            public boolean onConsoleMessage(ConsoleMessage consoleMessage) {
+                Log.d(getClass().getName(), consoleMessage.sourceId() + ":" + consoleMessage.lineNumber() + " -- " + consoleMessage.message());
+                return true;
+            }
+        });
+
+        webSettings = mainWebView.getSettings();
+        webSettings.setJavaScriptEnabled(true);
+        webSettings.setCacheMode(WebSettings.LOAD_NO_CACHE);
+
+        mainWebView.addJavascriptInterface(this, "nfc");
+
+        mainWebView.loadUrl("http://" + appDomain + "/");
+    }
+
+    @Override
+    public void onBackPressed() {
+        if(mainWebView.canGoBack()) {
+            mainWebView.goBack();
+        } else {
+            finish();
+        }
     }
 
     @Override

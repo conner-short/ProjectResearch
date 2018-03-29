@@ -28,24 +28,24 @@ import java.util.List;
 public abstract class NfcActivity extends Activity implements ReaderTaskInterface {
     protected enum NfcMode {READER, CARD_EM};
 
-    private NfcMode nfcMode;
-    private boolean nfcEnabled;
+    private NfcMode nfcMode = NfcMode.CARD_EM;
+    private boolean nfcEnabled = false;
     private NfcAdapter nfcAdapter;
 
-    private IsoDep tagInterface;
+    private IsoDep tagInterface = null;
 
     /* Service connection variables */
     private Intent serviceIntent;
     private Messenger serviceMessenger;
     private IntentFilter serviceIntentFilter;
     private BroadcastReceiver broadcastReceiver;
-    private boolean serviceIsBound;
+    private boolean serviceIsBound = false;
 
     private ServiceConnection serviceConn;
 
-    private String receivedString;
-    private boolean newReceivedData;
-    private boolean waitingForReceivedData;
+    private String receivedString = null;
+    private boolean newReceivedData = false;
+    private boolean waitingForReceivedData = false;
 
     private int fragmentSize = 0;
 
@@ -56,10 +56,19 @@ public abstract class NfcActivity extends Activity implements ReaderTaskInterfac
     abstract void onReceiveComplete(boolean success, String str);
 
     @JavascriptInterface
-    public final void enable() {}
+    public final boolean exists() {
+        return true;
+    }
 
     @JavascriptInterface
-    public final void disable() {}
+    public final void enable() {
+        enableNfc();
+    }
+
+    @JavascriptInterface
+    public final void disable() {
+        disableNfc();
+    }
 
     @JavascriptInterface
     public final void send(String str) {
@@ -90,6 +99,7 @@ public abstract class NfcActivity extends Activity implements ReaderTaskInterfac
             onSendComplete(true);
         }
     }
+
     @JavascriptInterface
     public final void receive() {
         if(!nfcEnabled) {
@@ -116,36 +126,29 @@ public abstract class NfcActivity extends Activity implements ReaderTaskInterfac
     }
 
     @JavascriptInterface
-    public final void disconnect() {}
+    public final void disconnect() {
+        disconnectFromTag();
+    }
 
     @JavascriptInterface
-    public final void setNfcMode(int mode) {
+    public final void setMode(int mode) {
         /* 0 for card emulation, 1 for reader */
         setNfcMode((mode == 0) ? NfcMode.CARD_EM: NfcMode.READER);
     }
 
     @JavascriptInterface
-    public final int getNfcMode() {
+    public final int mode() {
         return (nfcMode == NfcMode.CARD_EM) ? 0 : 1;
     }
 
     @JavascriptInterface
-    protected final boolean isNfcEnabled() {
+    public final boolean enabled() {
         return nfcEnabled;
     }
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-
-        nfcMode = NfcMode.CARD_EM;
-        nfcEnabled = false;
-
-        serviceIsBound = false;
-
-        receivedString = null;
-        newReceivedData = false;
-        waitingForReceivedData = false;
 
         nfcAdapter = NfcAdapter.getDefaultAdapter(this);
 
@@ -316,6 +319,7 @@ public abstract class NfcActivity extends Activity implements ReaderTaskInterfac
     }
 
     protected void disableNfc() {
+        disconnectFromTag();
         disableReader();
         disableCardEm();
 
@@ -332,6 +336,18 @@ public abstract class NfcActivity extends Activity implements ReaderTaskInterfac
             case READ:
                 onReceiveComplete(status, commands.get(0).getResponsePayloadString());
                 break;
+        }
+    }
+
+    protected void disconnectFromTag() {
+        if(tagInterface != null) {
+            try {
+                tagInterface.close();
+            } catch(IOException e) {
+                Log.d(getClass().getName(), "Tag IsoDeop interface threw IOException");
+            }
+
+            tagInterface = null;
         }
     }
 }
